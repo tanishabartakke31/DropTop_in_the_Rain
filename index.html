@@ -7,7 +7,8 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
-  body { background: #b8c3cd; }
+  body { background: #b8c3cd; transition: background 1.2s ease; }
+  body.night { background: #12151f; }
 
   #app { position: fixed; inset: 0; overflow: hidden; }
   #canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -87,11 +88,37 @@
     min-width: 18px;
   }
 
+  .diff-row { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; }
+  .diff-btn {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.9);
+    border: 0.5px solid rgba(42, 53, 64, 0.15);
+    color: #2a3540;
+    padding: 9px 0;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s, color 0.15s;
+  }
+  .diff-btn.active { background: #2a3540; color: #fff; }
+
+  .stats-row {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    font-size: 13px;
+    color: #5a6570;
+    margin-bottom: 18px;
+  }
+  .stats-row b { color: #2a3540; font-weight: 600; }
+
   #hud {
     position: absolute;
     top: 16px;
     left: 16px;
-    right: 16px;
+    right: 96px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -130,12 +157,37 @@
   }
   .icon-btn:hover { background: rgba(255, 255, 255, 0.95); }
 
+  #global-controls {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 20;
+    display: flex;
+    gap: 8px;
+    pointer-events: auto;
+  }
+
+  #flash {
+    position: fixed;
+    inset: 0;
+    background: #fff;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 15;
+  }
+
   #result { display: none; flex-direction: column; align-items: center; gap: 16px; }
   #result-text {
     font-family: Georgia, "Times New Roman", serif;
     font-size: 24px;
     font-weight: 500;
     color: #2a3540;
+    text-align: center;
+  }
+  #result-meta {
+    font-size: 13px;
+    color: #5a6570;
+    margin-top: -10px;
     text-align: center;
   }
 
@@ -147,11 +199,19 @@
 <div id="app">
   <canvas id="canvas"></canvas>
 
+  <div id="flash"></div>
+
+  <div id="global-controls">
+    <button class="icon-btn" id="mute-btn" aria-label="Mute">🔊</button>
+    <button class="icon-btn" id="night-btn" aria-label="Night mode">☾</button>
+  </div>
+
   <!-- Page 1: Start -->
   <div id="page-start" class="page active">
     <div class="card">
       <h1 class="title">Raindrop Race</h1>
       <p class="tag">That childhood window game — pick a drop, watch it race.</p>
+      <div class="stats-row" id="start-stats"></div>
       <button class="btn" data-goto="howto">Start</button>
     </div>
   </div>
@@ -166,6 +226,11 @@
         <li><span class="num">2</span><span>First drop to reach the bottom of the glass wins.</span></li>
         <li><span class="num">3</span><span>Bigger drops absorb smaller ones — including yours.</span></li>
       </ul>
+      <div class="diff-row" id="diff-row">
+        <button class="diff-btn" data-diff="easy">Easy</button>
+        <button class="diff-btn active" data-diff="normal">Normal</button>
+        <button class="diff-btn" data-diff="hard">Hard</button>
+      </div>
       <button class="btn" data-goto="game">Play</button>
     </div>
   </div>
@@ -175,10 +240,10 @@
     <div id="hud">
       <button class="icon-btn" data-goto="start" aria-label="Home">←</button>
       <span id="status">Tap a drop to claim it</span>
-      <div style="width: 36px;"></div>
     </div>
     <div id="result" class="card">
       <div id="result-text"></div>
+      <div id="result-meta"></div>
       <div class="btn-row">
         <button class="btn sec" data-goto="start">Home</button>
         <button class="btn" id="again">Race again</button>
@@ -195,6 +260,11 @@
   const statusEl = document.getElementById('status');
   const resultEl = document.getElementById('result');
   const resultText = document.getElementById('result-text');
+  const resultMeta = document.getElementById('result-meta');
+  const flashEl = document.getElementById('flash');
+  const muteBtn = document.getElementById('mute-btn');
+  const nightBtn = document.getElementById('night-btn');
+  const startStatsEl = document.getElementById('start-stats');
 
   let W = 0, H = 0;
   const DPR = window.devicePixelRatio || 1;
@@ -203,12 +273,258 @@
   const ambient = [];
   const silhouettes = [];
   const wetLines = [];
+  const buildingWindows = [];
+  const particles = [];
   let racers = [];
 
   let playerId = -1;
   let gamePhase = 'picking';
   let currentPage = 'start';
+  let raceStartTime = null;
+  let elapsedTime = 0;
+  let glareT = 0;
 
+  let difficulty = 'normal';
+  const DIFFICULTY = {
+    easy:   { count: 6,  gravity: 0.85 },
+    normal: { count: 9,  gravity: 1 },
+    hard:   { count: 13, gravity: 1.18 }
+  };
+
+  let winStreak = 0;
+  let bestTime = localStorage.getItem('rr_best_time') !== null
+    ? parseFloat(localStorage.getItem('rr_best_time'))
+    : null;
+
+  let nightMode = false;
+  let nightBlend = 0;
+  let nextLightning = null;
+
+  const SKY_DAY = [[212, 221, 230], [194, 204, 214], [165, 176, 186], [139, 150, 160]];
+  const SKY_NIGHT = [[18, 22, 36], [14, 18, 30], [10, 13, 22], [5, 7, 14]];
+  const SKY_STOPS = [0, 0.4, 0.75, 1];
+
+  // ---------- Audio ----------
+  const audio = { ctx: null, master: null, saturation: null, satLowpass: null, noiseBuffer2s: null, rainSource: null, crackleTimer: null };
+  let muted = false;
+
+  function makeDistortionCurve(k) {
+    const n = 8192;
+    const curve = new Float32Array(n);
+    const norm = Math.tanh(k);
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * 2 - 1;
+      curve[i] = Math.tanh(k * x) / norm;
+    }
+    return curve;
+  }
+
+  function createNoiseBuffer(ctx, duration) {
+    const size = Math.max(1, Math.floor(ctx.sampleRate * duration));
+    const buffer = ctx.createBuffer(1, size, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < size; i++) data[i] = Math.random() * 2 - 1;
+    return buffer;
+  }
+
+  function ensureAudio() {
+    if (audio.ctx) {
+      if (audio.ctx.state === 'suspended') audio.ctx.resume();
+      return;
+    }
+    initAudio();
+  }
+
+  function initAudio() {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    audio.ctx = ctx;
+
+    audio.master = ctx.createGain();
+    audio.master.gain.value = muted ? 0 : 1;
+    audio.master.connect(ctx.destination);
+
+    audio.saturation = ctx.createWaveShaper();
+    audio.saturation.curve = makeDistortionCurve(2.5);
+    audio.saturation.oversample = '4x';
+
+    audio.satLowpass = ctx.createBiquadFilter();
+    audio.satLowpass.type = 'lowpass';
+    audio.satLowpass.frequency.value = 4200;
+
+    audio.saturation.connect(audio.satLowpass);
+    audio.satLowpass.connect(audio.master);
+
+    audio.noiseBuffer2s = createNoiseBuffer(ctx, 2);
+
+    startRain();
+    scheduleCrackle();
+  }
+
+  function startRain() {
+    const ctx = audio.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = audio.noiseBuffer2s;
+    src.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1100;
+    bp.Q.value = 0.8;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 1800;
+    const g = ctx.createGain();
+    g.gain.value = 0.065;
+    src.connect(bp); bp.connect(lp); lp.connect(g); g.connect(audio.saturation);
+    src.start();
+    audio.rainSource = src;
+  }
+
+  function scheduleCrackle() {
+    const delay = 400 + Math.random() * 1400;
+    audio.crackleTimer = setTimeout(() => {
+      playCrackle();
+      scheduleCrackle();
+    }, delay);
+  }
+
+  function playCrackle() {
+    if (!audio.ctx) return;
+    const ctx = audio.ctx;
+    const dur = 0.03 + Math.random() * 0.04;
+    const buf = createNoiseBuffer(ctx, dur);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 3000 + Math.random() * 2000;
+    const g = ctx.createGain();
+    const peak = 0.015 + Math.random() * 0.02;
+    const t0 = ctx.currentTime;
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(peak, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(hp); hp.connect(g); g.connect(audio.saturation);
+    src.start(t0);
+    src.stop(t0 + dur + 0.02);
+  }
+
+  function playClick() {
+    if (!audio.ctx) return;
+    const ctx = audio.ctx;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(420, t0);
+    osc.frequency.exponentialRampToValueAtTime(210, t0 + 0.1);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 1600;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.18, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.1);
+    osc.connect(lp); lp.connect(g); g.connect(audio.saturation);
+    osc.start(t0);
+    osc.stop(t0 + 0.12);
+  }
+
+  function playWin() {
+    if (!audio.ctx) return;
+    const ctx = audio.ctx;
+    const t0 = ctx.currentTime;
+    const notes = [261.63, 329.63, 392.00];
+    notes.forEach((freq, i) => {
+      const start = t0 + i * 0.11;
+      ['sine', 'triangle'].forEach((type, li) => {
+        const osc = ctx.createOscillator();
+        osc.type = type;
+        osc.frequency.value = freq;
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = 2200;
+        const g = ctx.createGain();
+        const peak = li === 0 ? 0.14 : 0.08;
+        g.gain.setValueAtTime(0, start);
+        g.gain.linearRampToValueAtTime(peak, start + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + 0.35);
+        osc.connect(lp); lp.connect(g); g.connect(audio.saturation);
+        osc.start(start);
+        osc.stop(start + 0.4);
+      });
+    });
+  }
+
+  function playLose() {
+    if (!audio.ctx) return;
+    const ctx = audio.ctx;
+    const t0 = ctx.currentTime;
+    const notes = [293.66, 196.00];
+    notes.forEach((freq, i) => {
+      const start = t0 + i * 0.16;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 1200;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, start);
+      g.gain.linearRampToValueAtTime(0.16, start + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.4);
+      osc.connect(lp); lp.connect(g); g.connect(audio.saturation);
+      osc.start(start);
+      osc.stop(start + 0.45);
+    });
+  }
+
+  function playThunder() {
+    if (!audio.ctx) return;
+    const ctx = audio.ctx;
+    const dur = 1.4 + Math.random() * 0.8;
+    const buf = createNoiseBuffer(ctx, dur);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    const t0 = ctx.currentTime;
+    lp.frequency.setValueAtTime(400, t0);
+    lp.frequency.exponentialRampToValueAtTime(60, t0 + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.5, t0 + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(lp); lp.connect(g); g.connect(audio.saturation);
+    src.start(t0);
+    src.stop(t0 + dur + 0.05);
+  }
+
+  function toggleMute() {
+    muted = !muted;
+    muteBtn.textContent = muted ? '🔇' : '🔊';
+    if (audio.ctx) {
+      const t = audio.ctx.currentTime;
+      audio.master.gain.cancelScheduledValues(t);
+      audio.master.gain.linearRampToValueAtTime(muted ? 0 : 1, t + 0.15);
+    }
+  }
+
+  function triggerLightning() {
+    flashEl.style.transition = 'none';
+    flashEl.style.opacity = '0.85';
+    void flashEl.offsetWidth;
+    flashEl.style.transition = 'opacity 0.5s ease-out';
+    flashEl.style.opacity = '0';
+    playThunder();
+  }
+
+  function toggleNightMode() {
+    nightMode = !nightMode;
+    nightBtn.textContent = nightMode ? '☀' : '☾';
+    document.body.classList.toggle('night', nightMode);
+  }
+
+  // ---------- Scene ----------
   function resize() {
     W = window.innerWidth;
     H = window.innerHeight;
@@ -244,17 +560,32 @@
       });
     }
 
-    // Blurred silhouettes for outside world
+    // Blurred silhouettes for outside world (day/night color pairs)
     silhouettes.length = 0;
-    silhouettes.push({ x: 0.05 * W, y: 0.7 * H, rx: 0.32 * W, ry: 0.22 * H, color: 'rgba(140, 55, 65, 0.32)' });
-    silhouettes.push({ x: 0, y: 0.85 * H, rx: W, ry: 0.2 * H, color: 'rgba(65, 75, 85, 0.4)' });
-    silhouettes.push({ x: 0.55 * W, y: 0.35 * H, rx: 0.4 * W, ry: 0.3 * H, color: 'rgba(85, 100, 120, 0.12)' });
+    silhouettes.push({ x: 0.05 * W, y: 0.7 * H, rx: 0.32 * W, ry: 0.22 * H, day: [140, 55, 65, 0.32], night: [45, 22, 48, 0.4] });
+    silhouettes.push({ x: 0, y: 0.85 * H, rx: W, ry: 0.2 * H, day: [65, 75, 85, 0.4], night: [8, 10, 18, 0.6] });
+    silhouettes.push({ x: 0.55 * W, y: 0.35 * H, rx: 0.4 * W, ry: 0.3 * H, day: [85, 100, 120, 0.12], night: [14, 17, 28, 0.22] });
 
     // Wet vertical streaks
     wetLines.length = 0;
     wetLines.push({ x: 0.68 * W, width: 2.5, alpha: 0.45, startY: 0.15 * H });
     wetLines.push({ x: 0.42 * W, width: 1.8, alpha: 0.3, startY: 0.35 * H });
     wetLines.push({ x: 0.85 * W, width: 2, alpha: 0.35, startY: 0.05 * H });
+
+    // Flickering lit windows on the night skyline
+    buildingWindows.length = 0;
+    const winCount = Math.floor(W / 40);
+    for (let i = 0; i < winCount; i++) {
+      buildingWindows.push({
+        x: Math.random() * W,
+        y: H * (0.82 + Math.random() * 0.15),
+        w: 3 + Math.random() * 3,
+        h: 4 + Math.random() * 5,
+        phase: Math.random() * Math.PI * 2,
+        speed: 0.5 + Math.random() * 2,
+        on: Math.random() < 0.7
+      });
+    }
   }
 
   class Racer {
@@ -267,6 +598,7 @@
       this.vx = 0;
       this.alive = true;
       this.absorbed = false;
+      this.splashed = false;
       this.stuck = 0.3 + Math.random() * 1.8;
       this.wig = Math.random() * Math.PI * 2;
       this.trail = [];
@@ -279,7 +611,7 @@
         return;
       }
       const gm = racing ? 1 : 0.5;
-      const g = (18 + this.size * 3.5) * gm;
+      const g = (18 + this.size * 3.5) * gm * DIFFICULTY[difficulty].gravity;
       this.vy += g * dt;
       const mx = (racing ? 45 : 22) + this.size * (racing ? 20 : 9);
       if (this.vy > mx) this.vy = mx;
@@ -299,7 +631,7 @@
 
   function spawnRacers() {
     racers = [];
-    const n = 9;
+    const n = DIFFICULTY[difficulty].count;
     for (let i = 0; i < n; i++) {
       const s = 7 + Math.random() * 5;
       const x = 30 + (W - 60) * ((i + 0.15 + Math.random() * 0.7) / n);
@@ -319,6 +651,7 @@
         if (d < (a.size + b.size) * 0.72) {
           const big = a.size >= b.size ? a : b;
           const sm = a.size >= b.size ? b : a;
+          spawnSplash((a.x + b.x) / 2, (a.y + b.y) / 2, 5);
           big.size = Math.sqrt(big.size * big.size + sm.size * sm.size);
           big.vy = Math.max(big.vy, sm.vy) * 1.05;
           sm.alive = false;
@@ -328,27 +661,91 @@
     }
   }
 
+  // ---------- Particles ----------
+  function spawnSplash(x, y, count) {
+    const n = count || 6;
+    for (let i = 0; i < n; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spd = 20 + Math.random() * 60;
+      particles.push({
+        x, y,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd - 20,
+        r: 1 + Math.random() * 2.5,
+        life: 0,
+        maxLife: 0.3 + Math.random() * 0.35
+      });
+    }
+  }
+
+  function updateParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life += dt;
+      if (p.life > p.maxLife) { particles.splice(i, 1); continue; }
+      p.vy += 90 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      const t = 1 - p.life / p.maxLife;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(0.1, p.r * t), 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.5 * t})`;
+      ctx.fill();
+    }
+  }
+
+  // ---------- Drawing ----------
+  function mixColor(day, night, t) {
+    const r = Math.round(day[0] + (night[0] - day[0]) * t);
+    const g = Math.round(day[1] + (night[1] - day[1]) * t);
+    const b = Math.round(day[2] + (night[2] - day[2]) * t);
+    const a = day[3] + (night[3] - day[3]) * t;
+    return `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`;
+  }
+
   function drawSky() {
     const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, '#d4dde6');
-    g.addColorStop(0.4, '#c2ccd6');
-    g.addColorStop(0.75, '#a5b0ba');
-    g.addColorStop(1, '#8b96a0');
+    for (let i = 0; i < SKY_STOPS.length; i++) {
+      const d = SKY_DAY[i], n = SKY_NIGHT[i];
+      const r = Math.round(d[0] + (n[0] - d[0]) * nightBlend);
+      const gg = Math.round(d[1] + (n[1] - d[1]) * nightBlend);
+      const b = Math.round(d[2] + (n[2] - d[2]) * nightBlend);
+      g.addColorStop(SKY_STOPS[i], `rgb(${r}, ${gg}, ${b})`);
+    }
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
   }
 
   function drawSilhouettes() {
     for (const s of silhouettes) {
+      const color = mixColor(s.day, s.night, nightBlend);
       const g = ctx.createRadialGradient(
         s.x + s.rx / 2, s.y + s.ry / 2, 0,
         s.x + s.rx / 2, s.y + s.ry / 2, Math.max(s.rx, s.ry) / 1.5
       );
-      g.addColorStop(0, s.color);
-      g.addColorStop(1, s.color.replace(/[\d\.]+\)$/, '0)'));
+      g.addColorStop(0, color);
+      g.addColorStop(1, color.replace(/[\d.]+\)$/, '0)'));
       ctx.fillStyle = g;
       ctx.fillRect(s.x, s.y, s.rx, s.ry);
     }
+  }
+
+  function drawWindows(t) {
+    if (nightBlend <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = nightBlend;
+    for (const w of buildingWindows) {
+      if (!w.on) continue;
+      const flicker = 0.55 + 0.45 * Math.sin(t * w.speed + w.phase);
+      ctx.fillStyle = `rgba(255, 200, 110, ${(0.5 * flicker).toFixed(3)})`;
+      ctx.fillRect(w.x, w.y, w.w, w.h);
+    }
+    ctx.restore();
   }
 
   function drawWetLines() {
@@ -451,17 +848,70 @@
     }
   }
 
-  function endGame(text) {
+  function drawCondensation(dt) {
+    glareT += dt;
+
+    // Radial vignette
+    const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.75);
+    vg.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vg.addColorStop(1, 'rgba(10, 14, 18, 0.35)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Slow diagonal glare band
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.rotate(-Math.PI / 8);
+    const span = W + H * 2;
+    const sweep = ((glareT * 60) % span) - span / 2;
+    const band = ctx.createLinearGradient(sweep - 70, 0, sweep + 70, 0);
+    band.addColorStop(0, 'rgba(255, 255, 255, 0)');
+    band.addColorStop(0.5, 'rgba(255, 255, 255, 0.06)');
+    band.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = band;
+    ctx.fillRect(-W, -H, W * 2, H * 2);
+    ctx.restore();
+  }
+
+  // ---------- Game flow ----------
+  function updateStatsDisplay() {
+    if (!startStatsEl) return;
+    startStatsEl.innerHTML = `Best <b>${bestTime !== null ? bestTime.toFixed(1) + 's' : '—'}</b> &nbsp;·&nbsp; Streak <b>${winStreak}</b>`;
+  }
+
+  function endGame(text, won) {
     gamePhase = 'ended';
+    const elapsed = raceStartTime !== null ? (performance.now() - raceStartTime) / 1000 : null;
+
+    if (won) {
+      winStreak++;
+      playWin();
+      if (elapsed !== null && (bestTime === null || elapsed < bestTime)) {
+        bestTime = elapsed;
+        localStorage.setItem('rr_best_time', String(bestTime));
+      }
+    } else {
+      winStreak = 0;
+      playLose();
+    }
+
     resultText.textContent = text;
+    let meta = '';
+    if (elapsed !== null) meta += `${elapsed.toFixed(1)}s`;
+    meta += (meta ? ' · ' : '') + `Streak ${winStreak}`;
+    if (bestTime !== null) meta += ` · Best ${bestTime.toFixed(1)}s`;
+    resultMeta.textContent = meta;
+
     resultEl.style.display = 'flex';
     statusEl.style.display = 'none';
+    updateStatsDisplay();
   }
 
   function startGame() {
     spawnRacers();
     playerId = -1;
     gamePhase = 'picking';
+    raceStartTime = null;
     resultEl.style.display = 'none';
     statusEl.style.display = 'block';
     statusEl.textContent = 'Tap a drop to claim it';
@@ -476,15 +926,20 @@
     r.trail = [];
     r.size = 7 + Math.random() * 5;
     r.absorbed = false;
+    r.splashed = false;
   }
 
   let lastT = performance.now();
   function loop(t) {
     const dt = Math.min(0.05, (t - lastT) / 1000);
     lastT = t;
+    elapsedTime += dt;
+
+    nightBlend += ((nightMode ? 1 : 0) - nightBlend) * Math.min(1, dt * 2.5);
 
     drawSky();
     drawSilhouettes();
+    drawWindows(elapsedTime);
     drawWetLines();
     drawSpeckles();
     drawAmbient(dt);
@@ -496,16 +951,25 @@
     for (const r of racers) if (r.alive) r.update(dt, racing);
     if (racing) tryMerges();
 
-    if (racing) {
-      if (playerId >= 0) {
-        const p = racers[playerId];
-        if (p && p.absorbed) endGame('Your drop got absorbed');
+    for (const r of racers) {
+      if (r.alive && !r.splashed && r.y > H - 20) {
+        spawnSplash(r.x, H - 14, 7);
+        r.splashed = true;
       }
-      for (const r of racers) {
-        if (r.alive && r.y > H - 20) {
-          if (r.id === playerId) endGame('Your drop won');
-          else endGame('Drop #' + (r.id + 1) + ' reached first');
-          break;
+    }
+
+    if (racing) {
+      if (playerId >= 0 && gamePhase === 'racing') {
+        const p = racers[playerId];
+        if (p && p.absorbed) endGame('Your drop got absorbed', false);
+      }
+      if (gamePhase === 'racing') {
+        for (const r of racers) {
+          if (r.alive && r.y > H - 20) {
+            if (r.id === playerId) endGame('Your drop won', true);
+            else endGame('Drop #' + (r.id + 1) + ' reached first', false);
+            break;
+          }
         }
       }
     } else {
@@ -518,6 +982,21 @@
 
     for (const r of racers) if (r.alive) drawRacer(r, r.id === playerId);
 
+    updateParticles(dt);
+    drawParticles();
+
+    drawCondensation(dt);
+
+    if (nightMode && nightBlend > 0.6) {
+      if (nextLightning === null) nextLightning = elapsedTime + 4 + Math.random() * 6;
+      if (elapsedTime > nextLightning) {
+        triggerLightning();
+        nextLightning = elapsedTime + 6 + Math.random() * 10;
+      }
+    } else {
+      nextLightning = null;
+    }
+
     requestAnimationFrame(loop);
   }
 
@@ -526,18 +1005,46 @@
     document.getElementById('page-' + page).classList.add('active');
     currentPage = page;
     if (page === 'game') startGame();
+    if (page === 'start') updateStatsDisplay();
   }
 
   document.querySelectorAll('[data-goto]').forEach(el => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
+      ensureAudio();
+      playClick();
       goto(el.dataset.goto);
     });
   });
 
   document.getElementById('again').addEventListener('click', (e) => {
     e.stopPropagation();
+    ensureAudio();
+    playClick();
     startGame();
+  });
+
+  document.querySelectorAll('.diff-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      ensureAudio();
+      playClick();
+      difficulty = btn.dataset.diff;
+      document.querySelectorAll('.diff-btn').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
+
+  muteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ensureAudio();
+    toggleMute();
+  });
+
+  nightBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ensureAudio();
+    playClick();
+    toggleNightMode();
   });
 
   canvas.addEventListener('click', (e) => {
@@ -555,6 +1062,7 @@
     if (best >= 0) {
       playerId = best;
       gamePhase = 'racing';
+      raceStartTime = performance.now();
       statusEl.textContent = 'Race in progress…';
     }
   });
@@ -576,11 +1084,13 @@
     if (best >= 0) {
       playerId = best;
       gamePhase = 'racing';
+      raceStartTime = performance.now();
       statusEl.textContent = 'Race in progress…';
       e.preventDefault();
     }
   }, { passive: false });
 
+  updateStatsDisplay();
   resize();
   window.addEventListener('resize', resize);
   requestAnimationFrame(loop);
