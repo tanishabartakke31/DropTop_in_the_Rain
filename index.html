@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raindrop Race</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  body { background: #b8c3cd; }
+
+  #app { position: fixed; inset: 0; overflow: hidden; }
+  #canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .page { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; padding: 24px; pointer-events: none; }
+  .page.active { display: flex; }
+  .page > * { pointer-events: auto; }
+
+  .card {
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 20px;
+    padding: 32px 36px;
+    text-align: center;
+    max-width: 380px;
+    width: 90%;
+    box-shadow: 0 6px 24px rgba(40, 50, 60, 0.1);
+  }
+
+  .title {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 34px;
+    font-weight: 500;
+    color: #2a3540;
+    margin-bottom: 10px;
+    letter-spacing: -0.5px;
+    line-height: 1.1;
+  }
+
+  .tag {
+    font-size: 15px;
+    color: #5a6570;
+    margin-bottom: 26px;
+    line-height: 1.6;
+    font-style: italic;
+  }
+
+  .btn {
+    background: #2a3540;
+    color: #fff;
+    border: none;
+    padding: 12px 32px;
+    border-radius: 999px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .btn:hover { background: #1a2530; }
+  .btn:active { transform: scale(0.97); }
+  .btn.sec {
+    background: rgba(255, 255, 255, 0.9);
+    color: #2a3540;
+    border: 0.5px solid rgba(42, 53, 64, 0.15);
+  }
+
+  .list {
+    text-align: left;
+    list-style: none;
+    font-size: 14.5px;
+    color: #3a4550;
+    line-height: 1.6;
+    margin-bottom: 24px;
+  }
+  .list li {
+    padding: 10px 0;
+    border-bottom: 0.5px solid rgba(42, 53, 64, 0.1);
+    display: flex;
+    gap: 12px;
+  }
+  .list li:last-child { border: none; }
+  .num {
+    color: #8590a0;
+    font-weight: 500;
+    min-width: 18px;
+  }
+
+  #hud {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    pointer-events: none;
+  }
+  #hud > * { pointer-events: auto; }
+
+  #status {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 13px;
+    color: #2a3540;
+    font-weight: 500;
+    box-shadow: 0 2px 8px rgba(40, 50, 60, 0.08);
+  }
+
+  .icon-btn {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: none;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #2a3540;
+    font-size: 18px;
+    box-shadow: 0 2px 8px rgba(40, 50, 60, 0.08);
+  }
+  .icon-btn:hover { background: rgba(255, 255, 255, 0.95); }
+
+  #result { display: none; flex-direction: column; align-items: center; gap: 16px; }
+  #result-text {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 24px;
+    font-weight: 500;
+    color: #2a3540;
+    text-align: center;
+  }
+
+  .btn-row { display: flex; gap: 12px; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <canvas id="canvas"></canvas>
+
+  <!-- Page 1: Start -->
+  <div id="page-start" class="page active">
+    <div class="card">
+      <h1 class="title">Raindrop Race</h1>
+      <p class="tag">That childhood window game — pick a drop, watch it race.</p>
+      <button class="btn" data-goto="howto">Start</button>
+    </div>
+  </div>
+
+  <!-- Page 2: How to Play -->
+  <div id="page-howto" class="page">
+    <div class="card">
+      <h2 class="title" style="font-size: 26px;">How to play</h2>
+      <p class="tag" style="margin-bottom: 20px;">Rules of the road.</p>
+      <ul class="list">
+        <li><span class="num">1</span><span>Tap any drop on the window to claim it as yours.</span></li>
+        <li><span class="num">2</span><span>First drop to reach the bottom of the glass wins.</span></li>
+        <li><span class="num">3</span><span>Bigger drops absorb smaller ones — including yours.</span></li>
+      </ul>
+      <button class="btn" data-goto="game">Play</button>
+    </div>
+  </div>
+
+  <!-- Page 3: Game -->
+  <div id="page-game" class="page">
+    <div id="hud">
+      <button class="icon-btn" data-goto="start" aria-label="Home">←</button>
+      <span id="status">Tap a drop to claim it</span>
+      <div style="width: 36px;"></div>
+    </div>
+    <div id="result" class="card">
+      <div id="result-text"></div>
+      <div class="btn-row">
+        <button class="btn sec" data-goto="start">Home</button>
+        <button class="btn" id="again">Race again</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const app = document.getElementById('app');
+  const statusEl = document.getElementById('status');
+  const resultEl = document.getElementById('result');
+  const resultText = document.getElementById('result-text');
+
+  let W = 0, H = 0;
+  const DPR = window.devicePixelRatio || 1;
+
+  const speckles = [];
+  const ambient = [];
+  const silhouettes = [];
+  const wetLines = [];
+  let racers = [];
+
+  let playerId = -1;
+  let gamePhase = 'picking';
+  let currentPage = 'start';
+
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    initScene();
+  }
+
+  function initScene() {
+    // Tiny mist speckles — the fine wetness that covers everything
+    speckles.length = 0;
+    const speckleCount = Math.floor((W * H) / 550);
+    for (let i = 0; i < speckleCount; i++) {
+      speckles.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        r: 0.3 + Math.random() * 1.5,
+        op: 0.5 + Math.random() * 0.5
+      });
+    }
+
+    // Small ambient drops — stationary or barely moving
+    ambient.length = 0;
+    const ambientCount = Math.floor((W * H) / 2400);
+    for (let i = 0; i < ambientCount; i++) {
+      ambient.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        size: 2 + Math.random() * 4.5,
+        wig: Math.random() * Math.PI * 2,
+        drift: Math.random() < 0.1
+      });
+    }
+
+    // Blurred silhouettes for outside world
+    silhouettes.length = 0;
+    silhouettes.push({ x: 0.05 * W, y: 0.7 * H, rx: 0.32 * W, ry: 0.22 * H, color: 'rgba(140, 55, 65, 0.32)' });
+    silhouettes.push({ x: 0, y: 0.85 * H, rx: W, ry: 0.2 * H, color: 'rgba(65, 75, 85, 0.4)' });
+    silhouettes.push({ x: 0.55 * W, y: 0.35 * H, rx: 0.4 * W, ry: 0.3 * H, color: 'rgba(85, 100, 120, 0.12)' });
+
+    // Wet vertical streaks
+    wetLines.length = 0;
+    wetLines.push({ x: 0.68 * W, width: 2.5, alpha: 0.45, startY: 0.15 * H });
+    wetLines.push({ x: 0.42 * W, width: 1.8, alpha: 0.3, startY: 0.35 * H });
+    wetLines.push({ x: 0.85 * W, width: 2, alpha: 0.35, startY: 0.05 * H });
+  }
+
+  class Racer {
+    constructor(x, y, s, id) {
+      this.id = id;
+      this.x = x;
+      this.y = y;
+      this.size = s;
+      this.vy = 0;
+      this.vx = 0;
+      this.alive = true;
+      this.absorbed = false;
+      this.stuck = 0.3 + Math.random() * 1.8;
+      this.wig = Math.random() * Math.PI * 2;
+      this.trail = [];
+    }
+    update(dt, racing) {
+      this.wig += dt * 2;
+      if (this.stuck > 0) {
+        this.stuck -= dt;
+        this.vy *= 0.6;
+        return;
+      }
+      const gm = racing ? 1 : 0.5;
+      const g = (18 + this.size * 3.5) * gm;
+      this.vy += g * dt;
+      const mx = (racing ? 45 : 22) + this.size * (racing ? 20 : 9);
+      if (this.vy > mx) this.vy = mx;
+      this.vx = Math.sin(this.wig) * 5;
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      const sp = racing ? 0.007 : 0.025;
+      if (this.size < 14 && Math.random() < sp && this.vy > 5) {
+        this.stuck = 0.25 + Math.random() * (racing ? 0.5 : 1.5);
+      }
+      if (this.vy > 3) {
+        this.trail.push({ x: this.x, y: this.y });
+        if (this.trail.length > 14) this.trail.shift();
+      }
+    }
+  }
+
+  function spawnRacers() {
+    racers = [];
+    const n = 9;
+    for (let i = 0; i < n; i++) {
+      const s = 7 + Math.random() * 5;
+      const x = 30 + (W - 60) * ((i + 0.15 + Math.random() * 0.7) / n);
+      const y = 15 + Math.random() * 100;
+      racers.push(new Racer(x, y, s, i));
+    }
+  }
+
+  function tryMerges() {
+    for (let i = 0; i < racers.length; i++) {
+      if (!racers[i].alive) continue;
+      for (let j = i + 1; j < racers.length; j++) {
+        if (!racers[j].alive) continue;
+        const a = racers[i], b = racers[j];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < (a.size + b.size) * 0.72) {
+          const big = a.size >= b.size ? a : b;
+          const sm = a.size >= b.size ? b : a;
+          big.size = Math.sqrt(big.size * big.size + sm.size * sm.size);
+          big.vy = Math.max(big.vy, sm.vy) * 1.05;
+          sm.alive = false;
+          if (sm.id === playerId) sm.absorbed = true;
+        }
+      }
+    }
+  }
+
+  function drawSky() {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#d4dde6');
+    g.addColorStop(0.4, '#c2ccd6');
+    g.addColorStop(0.75, '#a5b0ba');
+    g.addColorStop(1, '#8b96a0');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawSilhouettes() {
+    for (const s of silhouettes) {
+      const g = ctx.createRadialGradient(
+        s.x + s.rx / 2, s.y + s.ry / 2, 0,
+        s.x + s.rx / 2, s.y + s.ry / 2, Math.max(s.rx, s.ry) / 1.5
+      );
+      g.addColorStop(0, s.color);
+      g.addColorStop(1, s.color.replace(/[\d\.]+\)$/, '0)'));
+      ctx.fillStyle = g;
+      ctx.fillRect(s.x, s.y, s.rx, s.ry);
+    }
+  }
+
+  function drawWetLines() {
+    for (const l of wetLines) {
+      const g = ctx.createLinearGradient(l.x - l.width, 0, l.x + l.width, 0);
+      g.addColorStop(0, 'rgba(255, 255, 255, 0)');
+      g.addColorStop(0.5, `rgba(255, 255, 255, ${l.alpha})`);
+      g.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(l.x - l.width, l.startY, l.width * 2, H - l.startY);
+    }
+  }
+
+  function drawSpeckles() {
+    for (const s of speckles) {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(50, 60, 70, ${s.op * 0.3})`;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(s.x - s.r * 0.25, s.y - s.r * 0.3, s.r * 0.55, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, 255, 255, ${s.op * 0.9})`;
+      ctx.fill();
+    }
+  }
+
+  function drawDrop(x, y, s, stretch) {
+    // Teardrop shape
+    ctx.beginPath();
+    ctx.moveTo(x + s, y);
+    ctx.arc(x, y, s, 0, Math.PI);
+    ctx.quadraticCurveTo(x - s * 0.9, y - s * 0.65 - stretch, x, y - s - stretch);
+    ctx.quadraticCurveTo(x + s * 0.9, y - s * 0.65 - stretch, x + s, y);
+    ctx.closePath();
+
+    // Fill — subtle darker + inverted light
+    const fg = ctx.createLinearGradient(x, y - s, x, y + s);
+    fg.addColorStop(0, 'rgba(200, 215, 230, 0.4)');
+    fg.addColorStop(0.6, 'rgba(125, 140, 155, 0.32)');
+    fg.addColorStop(1, 'rgba(75, 90, 105, 0.42)');
+    ctx.fillStyle = fg;
+    ctx.fill();
+
+    // Dark rim (surface tension)
+    ctx.strokeStyle = 'rgba(30, 40, 50, 0.55)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+
+    // Bright top-left highlight
+    ctx.beginPath();
+    ctx.ellipse(x - s * 0.28, y - s * 0.15, s * 0.38, s * 0.22, -Math.PI / 5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
+    ctx.fill();
+
+    // Small sparkle
+    if (s > 2.5) {
+      ctx.beginPath();
+      ctx.arc(x - s * 0.38, y - s * 0.32, s * 0.13, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.fill();
+    }
+  }
+
+  function drawAmbient(dt) {
+    for (const a of ambient) {
+      a.wig += dt * 1.2;
+      const dx = a.drift ? Math.sin(a.wig) * 0.15 : 0;
+      drawDrop(a.x + dx, a.y, a.size, 0);
+    }
+  }
+
+  function drawRacer(r, isP) {
+    // Wet trail
+    if (r.trail.length > 1) {
+      for (let i = 1; i < r.trail.length; i++) {
+        const p = r.trail[i], prev = r.trail[i - 1];
+        const t = i / r.trail.length;
+        ctx.beginPath();
+        ctx.moveTo(prev.x, prev.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.strokeStyle = `rgba(255, 255, 255, ${t * 0.4})`;
+        ctx.lineWidth = t * r.size * 0.6;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+    }
+    const stretch = Math.min(r.size * 1.5, r.vy * 0.05);
+    drawDrop(r.x, r.y, r.size, stretch);
+    if (isP) {
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.size + 7, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(200, 80, 40, 0.85)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.size + 12, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(200, 80, 40, 0.28)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+  }
+
+  function endGame(text) {
+    gamePhase = 'ended';
+    resultText.textContent = text;
+    resultEl.style.display = 'flex';
+    statusEl.style.display = 'none';
+  }
+
+  function startGame() {
+    spawnRacers();
+    playerId = -1;
+    gamePhase = 'picking';
+    resultEl.style.display = 'none';
+    statusEl.style.display = 'block';
+    statusEl.textContent = 'Tap a drop to claim it';
+  }
+
+  function respawnRacer(r) {
+    r.alive = true;
+    r.y = -10 - Math.random() * 30;
+    r.x = 20 + Math.random() * (W - 40);
+    r.vy = 0;
+    r.stuck = 0.4 + Math.random() * 2;
+    r.trail = [];
+    r.size = 7 + Math.random() * 5;
+    r.absorbed = false;
+  }
+
+  let lastT = performance.now();
+  function loop(t) {
+    const dt = Math.min(0.05, (t - lastT) / 1000);
+    lastT = t;
+
+    drawSky();
+    drawSilhouettes();
+    drawWetLines();
+    drawSpeckles();
+    drawAmbient(dt);
+
+    if (racers.length === 0) spawnRacers();
+
+    const racing = (currentPage === 'game' && gamePhase === 'racing');
+
+    for (const r of racers) if (r.alive) r.update(dt, racing);
+    if (racing) tryMerges();
+
+    if (racing) {
+      if (playerId >= 0) {
+        const p = racers[playerId];
+        if (p && p.absorbed) endGame('Your drop got absorbed');
+      }
+      for (const r of racers) {
+        if (r.alive && r.y > H - 20) {
+          if (r.id === playerId) endGame('Your drop won');
+          else endGame('Drop #' + (r.id + 1) + ' reached first');
+          break;
+        }
+      }
+    } else {
+      // Natural cycling on start/howto pages and during picking
+      for (const r of racers) {
+        if (r.alive && r.y > H + 10) respawnRacer(r);
+        if (!r.alive) respawnRacer(r);
+      }
+    }
+
+    for (const r of racers) if (r.alive) drawRacer(r, r.id === playerId);
+
+    requestAnimationFrame(loop);
+  }
+
+  function goto(page) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-' + page).classList.add('active');
+    currentPage = page;
+    if (page === 'game') startGame();
+  }
+
+  document.querySelectorAll('[data-goto]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      goto(el.dataset.goto);
+    });
+  });
+
+  document.getElementById('again').addEventListener('click', (e) => {
+    e.stopPropagation();
+    startGame();
+  });
+
+  canvas.addEventListener('click', (e) => {
+    if (currentPage !== 'game' || gamePhase !== 'picking') return;
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    let best = -1, bd = 50;
+    for (const r of racers) {
+      if (!r.alive) continue;
+      const dx = r.x - cx, dy = r.y - cy;
+      const dd = Math.sqrt(dx * dx + dy * dy);
+      if (dd < bd) { bd = dd; best = r.id; }
+    }
+    if (best >= 0) {
+      playerId = best;
+      gamePhase = 'racing';
+      statusEl.textContent = 'Race in progress…';
+    }
+  });
+
+  canvas.addEventListener('touchstart', (e) => {
+    if (currentPage !== 'game' || gamePhase !== 'picking') return;
+    if (e.touches.length === 0) return;
+    const touch = e.touches[0];
+    const rect = canvas.getBoundingClientRect();
+    const cx = touch.clientX - rect.left;
+    const cy = touch.clientY - rect.top;
+    let best = -1, bd = 60;
+    for (const r of racers) {
+      if (!r.alive) continue;
+      const dx = r.x - cx, dy = r.y - cy;
+      const dd = Math.sqrt(dx * dx + dy * dy);
+      if (dd < bd) { bd = dd; best = r.id; }
+    }
+    if (best >= 0) {
+      playerId = best;
+      gamePhase = 'racing';
+      statusEl.textContent = 'Race in progress…';
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  resize();
+  window.addEventListener('resize', resize);
+  requestAnimationFrame(loop);
+})();
+</script>
+
+</body>
+</html>
